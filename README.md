@@ -1,7 +1,4 @@
-# board. — MERN Stack
-
-A forum-style app: anyone can read posts, but you need an account to create one.
-No comments, no voting, no categories — a clean starting point to build on.
+# board.
 
 ## Stack
 - **MongoDB** — database
