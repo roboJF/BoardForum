@@ -161,12 +161,61 @@ h1 {
   border-color: #5FA8A0;
 }
 
-.post-form textarea {
-  min-height: 80px;
+.post-editor {
+  border: 1px solid #cfe3e0;
+  border-radius: 8px;
+  background: #fbfefd;
+  overflow: hidden;
+}
+
+.post-editor:focus-within {
+  border-color: #5FA8A0;
+}
+
+.post-form .post-editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 100px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   resize: vertical;
 }
 
-.post-form button {
+.format-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px 8px;
+  border-top: 1px solid #dcece9;
+}
+
+.post-form .format-toolbar button {
+  min-width: 32px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #3f6f6a;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.post-form .format-toolbar button:hover,
+.post-form .format-toolbar button:focus-visible {
+  background: #e5f2ef;
+  outline: none;
+}
+
+.format-hint {
+  margin-left: auto;
+  color: #6b8a86;
+  font-size: 12px;
+}
+
+.post-form .post-submit {
   background: #5FA8A0;
   color: #ffffff;
   border: none;
@@ -177,7 +226,7 @@ h1 {
   transition: background 0.15s ease;
 }
 
-.post-form button:hover {
+.post-form .post-submit:hover {
   background: #3F847D;
 }
 
@@ -204,6 +253,28 @@ h1 {
 .post p {
   margin: 0 0 8px 0;
   white-space: pre-wrap;
+}
+
+.spoiler {
+  display: inline;
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: #344c49;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+  white-space: pre-wrap;
+}
+
+.spoiler.revealed {
+  background: #e5f2ef;
+  color: inherit;
+}
+
+.spoiler:focus-visible {
+  outline: 2px solid #4E9B94;
+  outline-offset: 2px;
 }
 
 .meta {

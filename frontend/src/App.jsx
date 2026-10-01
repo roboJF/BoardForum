@@ -1,6 +1,91 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const API_BASE = "/api";
+
+function Spoiler({ children }) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <button
+      type="button"
+      className={`spoiler ${revealed ? "revealed" : ""}`}
+      aria-label={revealed ? undefined : "Reveal spoiler"}
+      aria-expanded={revealed}
+      onClick={() => setRevealed(!revealed)}
+    >
+      {revealed ? children : "Spoiler — click to reveal"}
+    </button>
+  );
+}
+
+function findClosingMarker(text, start, marker) {
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] === "\\" && index + 1 < text.length) {
+      index += 1;
+      continue;
+    }
+    if (marker === "*" && text.startsWith("**", index)) {
+      index += 1;
+      continue;
+    }
+    if (text.startsWith(marker, index)) return index;
+  }
+  return -1;
+}
+
+function renderFormattedText(text, depth = 0, insideSpoiler = false) {
+  if (depth >= 10) return text;
+
+  const markers = insideSpoiler ? ["**", "*"] : ["**", "||", "*"];
+  const result = [];
+  let plainText = "";
+
+  for (let index = 0; index < text.length; ) {
+    if (
+      text[index] === "\\" &&
+      index + 1 < text.length &&
+      ["*", "|", "\\"].includes(text[index + 1])
+    ) {
+      plainText += text[index + 1];
+      index += 2;
+      continue;
+    }
+
+    const marker = markers.find((candidate) => text.startsWith(candidate, index));
+    const end = marker
+      ? findClosingMarker(text, index + marker.length, marker)
+      : -1;
+
+    if (marker && end > index + marker.length) {
+      if (plainText) {
+        result.push(plainText);
+        plainText = "";
+      }
+
+      const content = renderFormattedText(
+        text.slice(index + marker.length, end),
+        depth + 1,
+        insideSpoiler || marker === "||"
+      );
+
+      if (marker === "**") {
+        result.push(<strong key={index}>{content}</strong>);
+      } else if (marker === "*") {
+        result.push(<em key={index}>{content}</em>);
+      } else {
+        result.push(<Spoiler key={index}>{content}</Spoiler>);
+      }
+
+      index = end + marker.length;
+    } else {
+      plainText += text[index];
+      index += 1;
+    }
+  }
+
+  if (plainText) result.push(plainText);
+  return result;
+}
 
 function App() {
   const [posts, setPosts] = useState([]);
@@ -11,6 +96,7 @@ function App() {
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const bodyInput = useRef(null);
 
   const [authMode, setAuthMode] = useState("login"); // "login" | "register"
   const [authUsername, setAuthUsername] = useState("");
@@ -73,6 +159,26 @@ function App() {
     localStorage.removeItem("username");
   };
 
+  const formatSelection = (marker) => {
+    const textarea = bodyInput.current;
+    if (!textarea) return;
+
+    const { selectionStart, selectionEnd } = textarea;
+    const selectedText = body.slice(selectionStart, selectionEnd);
+    const replacement = `${marker}${selectedText}${marker}`;
+    setBody(
+      body.slice(0, selectionStart) + replacement + body.slice(selectionEnd)
+    );
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(
+        selectionStart + marker.length,
+        selectionStart + marker.length + selectedText.length
+      );
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!title.trim() || !body.trim()) return;
@@ -129,12 +235,28 @@ function App() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
-          <textarea
-            placeholder="What's on your mind?"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
-          <button type="submit">Post</button>
+          <div className="post-editor">
+            <textarea
+              ref={bodyInput}
+              placeholder="What's on your mind?"
+              aria-label="Post body"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+            />
+            <div className="format-toolbar" role="toolbar" aria-label="Format post text">
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => formatSelection("**")} aria-label="Bold selected text" title="Bold">
+                <strong>B</strong>
+              </button>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => formatSelection("*")} aria-label="Italicize selected text" title="Italic">
+                <em>I</em>
+              </button>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => formatSelection("||")} aria-label="Mark selected text as a spoiler" title="Spoiler">
+                Spoiler
+              </button>
+              <span className="format-hint">Use <code>{"\\*"}</code> for a literal *</span>
+            </div>
+          </div>
+          <button className="post-submit" type="submit">Post</button>
         </form>
       ) : (
         <div className="auth-box">
@@ -192,7 +314,7 @@ function App() {
         {posts.map((post) => (
           <div key={post._id} className="post">
             <h2>{post.title}</h2>
-            <p>{post.body}</p>
+            <p>{renderFormattedText(post.body)}</p>
             <span className="meta">
               posted by {post.author} &middot;{" "}
               {new Date(post.createdAt).toLocaleString()}
