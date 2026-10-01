@@ -2,6 +2,20 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
+export function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      req.user = jwt.verify(authHeader.slice(7), JWT_SECRET);
+    } catch (err) {
+      // Public routes still work when a saved session has expired.
+    }
+  }
+
+  next();
+}
+
 export function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization;
 

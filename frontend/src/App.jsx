@@ -90,6 +90,8 @@ function renderFormattedText(text, depth = 0, insideSpoiler = false) {
 function App() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [votingPosts, setVotingPosts] = useState({});
+  const [voteErrors, setVoteErrors] = useState({});
 
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [username, setUsername] = useState(localStorage.getItem("username") || "");
@@ -105,7 +107,9 @@ function App() {
 
   const fetchPosts = async () => {
     try {
-      const res = await fetch(`${API_BASE}/posts`);
+      const res = await fetch(`${API_BASE}/posts`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       setPosts(data);
     } catch (err) {
@@ -117,7 +121,7 @@ function App() {
 
   useEffect(() => {
     fetchPosts();
-  }, []);
+  }, [token]);
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -157,6 +161,41 @@ function App() {
     setUsername("");
     localStorage.removeItem("token");
     localStorage.removeItem("username");
+  };
+
+  const handleVote = async (postId, value) => {
+    if (!token || votingPosts[postId]) return;
+
+    setVotingPosts((current) => ({ ...current, [postId]: true }));
+    setVoteErrors((current) => ({ ...current, [postId]: "" }));
+
+    try {
+      const res = await fetch(`${API_BASE}/posts/${postId}/vote`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ value }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 401) handleLogout();
+        throw new Error(data.error || "Could not save your vote");
+      }
+
+      setPosts((current) =>
+        current.map((post) => (post._id === postId ? data : post))
+      );
+    } catch (err) {
+      setVoteErrors((current) => ({
+        ...current,
+        [postId]: err.message || "Could not save your vote",
+      }));
+    } finally {
+      setVotingPosts((current) => ({ ...current, [postId]: false }));
+    }
   };
 
   const formatSelection = (marker) => {
@@ -303,7 +342,7 @@ function App() {
           </form>
 
           <p className="auth-hint">
-            You need an account to post, but anyone can read posts.
+            You need an account to post or vote, but anyone can read posts.
           </p>
         </div>
       )}
@@ -315,10 +354,42 @@ function App() {
           <div key={post._id} className="post">
             <h2>{post.title}</h2>
             <p>{renderFormattedText(post.body)}</p>
-            <span className="meta">
-              posted by {post.author} &middot;{" "}
-              {new Date(post.createdAt).toLocaleString()}
-            </span>
+            <div className="post-footer">
+              <div className="vote-controls" role="group" aria-label={`Votes for ${post.title}`}>
+                <button
+                  type="button"
+                  className={post.userVote === 1 ? "active" : ""}
+                  aria-label={`Upvote ${post.title}`}
+                  aria-pressed={post.userVote === 1}
+                  title={token ? "Upvote" : "Log in to vote"}
+                  disabled={!token || votingPosts[post._id]}
+                  onClick={() => handleVote(post._id, 1)}
+                >
+                  ▲
+                </button>
+                <span className="vote-score" aria-label={`Score: ${post.score ?? 0}`}>
+                  {post.score ?? 0}
+                </span>
+                <button
+                  type="button"
+                  className={post.userVote === -1 ? "active" : ""}
+                  aria-label={`Downvote ${post.title}`}
+                  aria-pressed={post.userVote === -1}
+                  title={token ? "Downvote" : "Log in to vote"}
+                  disabled={!token || votingPosts[post._id]}
+                  onClick={() => handleVote(post._id, -1)}
+                >
+                  ▼
+                </button>
+              </div>
+              <span className="meta">
+                posted by {post.author} &middot;{" "}
+                {new Date(post.createdAt).toLocaleString()}
+              </span>
+            </div>
+            {voteErrors[post._id] && (
+              <p className="vote-error" role="alert">{voteErrors[post._id]}</p>
+            )}
           </div>
         ))}
       </div>
