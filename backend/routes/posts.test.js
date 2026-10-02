@@ -158,6 +158,73 @@ test("feed sorts by new, old, and top score with new as the default", async () =
   }
 });
 
+test("boards isolate feeds, preserve legacy posts in General, and validate new posts", async () => {
+  const originalFind = Post.find;
+  const originalCreate = Post.create;
+  const originalAggregate = Reply.aggregate;
+  const legacyId = "507f1f77bcf86cd799439031";
+  const techId = "507f1f77bcf86cd799439032";
+  const legacy = new Post({ _id: legacyId, title: "Before boards", body: "Hello" }).toObject();
+  delete legacy.board;
+  const technology = new Post({ _id: techId, title: "New device", body: "Hello", board: "technology" }).toObject();
+  const stored = [legacy, technology];
+  let lastFilter;
+
+  Post.find = (filter) => {
+    lastFilter = filter;
+    return {
+      sort: async () => stored
+        .filter((post) => filter.$or
+          ? post.board === "general" || post.board === undefined
+          : post.board === filter.board)
+        .map((post) => new Post(post)),
+    };
+  };
+  Post.create = async (fields) => {
+    const post = new Post(fields);
+    await post.validate();
+    return post;
+  };
+  Reply.aggregate = async () => [];
+
+  try {
+    let result = await callRoute("/", "get");
+    assert.deepEqual(result.data.map((post) => String(post._id)), [legacyId]);
+    assert.equal(result.data[0].board, "general");
+    assert.deepEqual(lastFilter, { $or: [{ board: "general" }, { board: { $exists: false } }] });
+
+    result = await callRoute("/", "get", { query: { board: "technology" } });
+    assert.deepEqual(result.data.map((post) => String(post._id)), [techId]);
+    assert.deepEqual(lastFilter, { board: "technology" });
+
+    result = await callRoute("/", "get", { query: { board: "entertainment" } });
+    assert.deepEqual(result.data, []);
+    assert.equal((await callRoute("/", "get", { query: { board: "unknown" } })).status, 400);
+
+    result = await callRoute("/", "post", {
+      authorized: true,
+      body: { title: "Film", body: "Thoughts", board: "entertainment" },
+    });
+    assert.equal(result.status, 201);
+    assert.equal(result.data.board, "entertainment");
+    assert.equal(result.data.author, "alice");
+
+    result = await callRoute("/", "post", {
+      authorized: true,
+      body: { title: "Fallback", body: "Thoughts" },
+    });
+    assert.equal(result.data.board, "general");
+    assert.equal((await callRoute("/", "post", {
+      authorized: true,
+      body: { title: "Invalid", body: "Thoughts", board: "unknown" },
+    })).status, 400);
+  } finally {
+    Post.find = originalFind;
+    Post.create = originalCreate;
+    Reply.aggregate = originalAggregate;
+  }
+});
+
 test("replies require login and appear only in post detail with a feed count", async () => {
   const originalFindById = Post.findById;
   const originalFind = Post.find;

@@ -57,6 +57,48 @@ h1 a {
   color: #3F847D;
 }
 
+.board-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.board-nav a {
+  padding: 8px 12px;
+  border: 1px solid #cfe3e0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3f6f6a;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.board-nav a:hover,
+.board-nav a.active {
+  border-color: #5FA8A0;
+  background: #e5f2ef;
+  color: #27665f;
+}
+
+.board-nav a:focus-visible {
+  outline: 2px solid #4E9B94;
+  outline-offset: 2px;
+}
+
+.board-heading h2,
+.composer-heading {
+  margin: 0;
+  font-size: 18px;
+}
+
+.board-heading p {
+  margin: 4px 0 0;
+  color: #6b8a86;
+  font-size: 14px;
+}
+
 .auth-box {
   background: #ffffff;
   border: 1px solid #dcece9;

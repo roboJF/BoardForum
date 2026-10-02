@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Post from "../models/Post.js";
 import Reply from "../models/Reply.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
+import { DEFAULT_BOARD, isBoard } from "../config/boards.js";
 
 const router = express.Router();
 
@@ -12,22 +13,30 @@ function postForViewer(post, userId, replyCount) {
 
   return {
     ...details,
+    board: details.board || DEFAULT_BOARD,
     score: votes.reduce((total, vote) => total + vote.value, 0),
     userVote: ownVote?.value || 0,
     ...(replyCount === undefined ? {} : { replyCount }),
   };
 }
 
-// GET all posts, sorted by newest, oldest, or net vote score
+// GET posts in one board, sorted by newest, oldest, or net vote score
 router.get("/", optionalAuth, async (req, res) => {
   const sort = req.query.sort || "new";
+  const board = req.query.board || DEFAULT_BOARD;
   if (!["new", "old", "top"].includes(sort)) {
     return res.status(400).json({ error: "Sort must be new, old, or top" });
+  }
+  if (!isBoard(board)) {
+    return res.status(400).json({ error: "Unknown board" });
   }
 
   try {
     const direction = sort === "old" ? 1 : -1;
-    const posts = await Post.find().sort({ createdAt: direction, _id: direction });
+    const filter = board === DEFAULT_BOARD
+      ? { $or: [{ board }, { board: { $exists: false } }] }
+      : { board };
+    const posts = await Post.find(filter).sort({ createdAt: direction, _id: direction });
     if (posts.length === 0) return res.json([]);
 
     const counts = await Reply.aggregate([
@@ -58,12 +67,15 @@ router.get("/", optionalAuth, async (req, res) => {
 // POST a new post — requires a logged-in user
 router.post("/", requireAuth, async (req, res) => {
   try {
-    const { title, body } = req.body;
+    const { title, body, board = DEFAULT_BOARD } = req.body;
     if (!title || !body) {
       return res.status(400).json({ error: "Title and body are required" });
     }
+    if (!isBoard(board)) {
+      return res.status(400).json({ error: "Unknown board" });
+    }
     // author is taken from the verified token, never trusted from the client
-    const post = await Post.create({ title, body, author: req.user.username });
+    const post = await Post.create({ title, body, board, author: req.user.username });
     res.status(201).json(postForViewer(post, req.user.id, 0));
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -152,6 +152,10 @@ function postIdFromHash() {
   return window.location.hash.match(/^#\/posts\/([a-f0-9]{24})$/i)?.[1].toLowerCase() || null;
 }
 
+function boardFromHash() {
+  return window.location.hash.match(/^#\/boards\/([a-z0-9-]+)$/i)?.[1].toLowerCase() || null;
+}
+
 function comparePosts(a, b, sortOrder) {
   const dateDifference = new Date(a.createdAt) - new Date(b.createdAt);
   const idDifference = String(a._id).localeCompare(String(b._id));
@@ -222,6 +226,11 @@ function PostCard({ post, token, voting, voteError, onVote, detail = false }) {
 }
 
 function App() {
+  const [boards, setBoards] = useState([]);
+  const [defaultBoard, setDefaultBoard] = useState(null);
+  const [boardSlug, setBoardSlug] = useState(boardFromHash);
+  const [boardsError, setBoardsError] = useState("");
+  const activeBoard = boards.find((board) => board.slug === (boardSlug || defaultBoard));
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedError, setFeedError] = useState("");
@@ -255,15 +264,41 @@ function App() {
     () => [...posts].sort((a, b) => comparePosts(a, b, sortOrder)),
     [posts, sortOrder]
   );
+  const visiblePosts = sortedPosts.filter((post) => post.board === activeBoard?.slug);
 
   useEffect(() => {
     const controller = new AbortController();
+    const loadBoards = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/boards`, { signal: controller.signal });
+        if (!res.ok) throw new Error("Could not load boards");
+        const data = await res.json();
+        if (!controller.signal.aborted) {
+          setBoards(data.boards);
+          setDefaultBoard(data.defaultBoard);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setBoardsError(err.message || "Could not load boards");
+      }
+    };
+    loadBoards();
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!activeBoard) {
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
     setLoading(true);
     setFeedError("");
+    setPosts([]);
 
     const loadPosts = async () => {
       try {
-        const res = await fetch(`${API_BASE}/posts?sort=${sortOrder}`, {
+        const res = await fetch(`${API_BASE}/posts?board=${encodeURIComponent(activeBoard.slug)}&sort=${sortOrder}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: controller.signal,
         });
@@ -279,11 +314,12 @@ function App() {
 
     loadPosts();
     return () => controller.abort();
-  }, [token, sortOrder, feedRefresh]);
+  }, [token, sortOrder, feedRefresh, activeBoard?.slug]);
 
   useEffect(() => {
     const updateSelectedPost = () => {
       setSelectedPostId(postIdFromHash());
+      setBoardSlug(boardFromHash());
       window.scrollTo(0, 0);
     };
     window.addEventListener("hashchange", updateSelectedPost);
@@ -479,7 +515,7 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!title.trim() || !body.trim()) return;
+    if (!activeBoard || !title.trim() || !body.trim()) return;
 
     try {
       const res = await fetch(`${API_BASE}/posts`, {
@@ -488,7 +524,7 @@ function App() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ title, body }),
+        body: JSON.stringify({ title, body, board: activeBoard.slug }),
       });
       const data = await res.json();
 
@@ -617,8 +653,25 @@ function App() {
         )}
       </div>
 
-      {token && !selectedPostId && (
+      {boards.length > 0 && (
+        <nav className="board-nav" aria-label="Boards">
+          {boards.map((board) => (
+            <a
+              key={board.slug}
+              href={`#/boards/${board.slug}`}
+              className={(selectedPostId ? selectedPost?.board : activeBoard?.slug) === board.slug ? "active" : ""}
+              aria-current={(selectedPostId ? selectedPost?.board : activeBoard?.slug) === board.slug ? "page" : undefined}
+            >
+              {board.name}
+            </a>
+          ))}
+        </nav>
+      )}
+      {boardsError && <p className="feed-error" role="alert">{boardsError}</p>}
+
+      {token && !selectedPostId && activeBoard && (
         <form onSubmit={handleSubmit} className="post-form">
+          <h2 className="composer-heading">Post in {activeBoard.name}</h2>
           <input
             type="text"
             placeholder="Title"
@@ -641,11 +694,13 @@ function App() {
           <button className="post-submit" type="submit">Post</button>
         </form>
       )}
-      {!token && !selectedPostId && authBox}
+      {!token && !selectedPostId && activeBoard && authBox}
 
       {selectedPostId ? (
         <div className="detail-view">
-          <a className="back-link" href="#/">← Back to posts</a>
+          <a className="back-link" href={selectedPost?.board || defaultBoard ? `#/boards/${selectedPost?.board || defaultBoard}` : "#/"}>
+            ← Back to {boards.find((board) => board.slug === selectedPost?.board)?.name || "posts"}
+          </a>
           {detailLoading && selectedPost?._id !== selectedPostId && <p>Loading post...</p>}
           {detailError && <p className="detail-error" role="alert">{detailError}</p>}
           {selectedPost?._id === selectedPostId && (
@@ -716,7 +771,16 @@ function App() {
         </div>
       ) : (
         <div className="feed-view">
-          <div className="feed-sort" role="group" aria-label="Sort posts">
+          {activeBoard && (
+            <div className="board-heading">
+              <h2>{activeBoard.name}</h2>
+              <p>{activeBoard.description}</p>
+            </div>
+          )}
+          {defaultBoard && !activeBoard && !boardsError && (
+            <p className="feed-error" role="alert">Board not found.</p>
+          )}
+          {activeBoard && <div className="feed-sort" role="group" aria-label="Sort posts">
             <span>Sort by</span>
             {SORT_OPTIONS.map(({ value, label }) => (
               <button
@@ -729,12 +793,12 @@ function App() {
                 {label}
               </button>
             ))}
-          </div>
-          <div className="post-list">
+          </div>}
+          {activeBoard && <div className="post-list">
             {loading && <p>Loading posts...</p>}
             {feedError && <p className="feed-error" role="alert">{feedError}</p>}
-            {!loading && !feedError && posts.length === 0 && <p>No posts yet. Be the first!</p>}
-            {sortedPosts.map((post) => (
+            {!loading && !feedError && visiblePosts.length === 0 && <p>No posts yet. Be the first!</p>}
+            {visiblePosts.map((post) => (
               <PostCard
                 key={post._id}
                 post={post}
@@ -744,7 +808,7 @@ function App() {
                 onVote={handleVote}
               />
             ))}
-          </div>
+          </div>}
         </div>
       )}
     </div>

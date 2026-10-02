@@ -16,8 +16,10 @@ board/
 │   │   ├── Reply.js          # Mongoose schema for replies
 │   │   └── User.js           # Mongoose schema for accounts
 │   ├── middleware/auth.js    # Verifies JWT, protects routes
+│   ├── config/boards.js      # Board names, slugs, and descriptions
 │   ├── routes/
 │   │   ├── auth.js           # POST /api/auth/register, /api/auth/login
+│   │   ├── boards.js         # GET /api/boards
 │   │   └── posts.js          # Posts, votes, and replies API routes
 │   ├── server.js             # Express app entry point
 │   ├── .env.example
@@ -59,5 +61,7 @@ npm run dev
 Runs on `http://localhost:5173` and proxies `/api` requests to the backend.
 
 ### 4. Open the app
-Visit `http://localhost:5173`. The feed starts with new posts and can be sorted by New, Old, or Top (net vote score); it also shows each post's total reply count. Open a post to read its reply threads; sign in to create a post, reply to a post or another reply, or vote. Reply editors support bold, italic, and spoiler formatting.
+Visit `http://localhost:5173`. Choose General, Technology, or Entertainment from the board navigation. Each board has its own feed, starts with new posts, and can be sorted by New, Old, or Top (net vote score). Existing posts appear in General. The feed shows each post's total reply count. Open a post to read its reply threads; sign in to create a post in the selected board, reply to a post or another reply, or vote. Reply editors support bold, italic, and spoiler formatting.
+
+To add a board, add its `slug`, `name`, and `description` to `backend/config/boards.js`. The API and frontend navigation use that list automatically.
 
