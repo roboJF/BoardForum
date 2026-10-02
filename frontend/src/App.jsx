@@ -104,6 +104,45 @@ function FormattingToolbar({ label, onFormat }) {
   );
 }
 
+function arrangeReplies(replies) {
+  const byId = new Map(replies.map((reply) => [String(reply._id), reply]));
+  const children = new Map();
+  const ordered = [];
+  const seen = new Set();
+
+  for (const reply of replies) {
+    const parentId = reply.parentReply && String(reply.parentReply);
+    if (!parentId) continue;
+    if (!children.has(parentId)) children.set(parentId, []);
+    children.get(parentId).push(reply);
+  }
+
+  const visit = (root) => {
+    const stack = [{ reply: root, depth: 0 }];
+    while (stack.length) {
+      const { reply, depth } = stack.pop();
+      const id = String(reply._id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const parent = byId.get(String(reply.parentReply));
+      ordered.push({ reply, depth, parentAuthor: parent?.author });
+      const descendants = children.get(id) || [];
+      for (let index = descendants.length - 1; index >= 0; index -= 1) {
+        stack.push({ reply: descendants[index], depth: depth + 1 });
+      }
+    }
+  };
+
+  for (const reply of replies) {
+    if (!reply.parentReply || !byId.has(String(reply.parentReply))) {
+      visit(reply);
+    }
+  }
+  for (const reply of replies) visit(reply);
+
+  return ordered;
+}
+
 function postIdFromHash() {
   return window.location.hash.match(/^#\/posts\/([a-f0-9]{24})$/i)?.[1].toLowerCase() || null;
 }
@@ -177,6 +216,7 @@ function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [replyBody, setReplyBody] = useState("");
+  const [replyTarget, setReplyTarget] = useState(null);
   const replyInput = useRef(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [replyError, setReplyError] = useState("");
@@ -232,6 +272,7 @@ function App() {
     setDetailError("");
     setReplyError("");
     setReplyBody("");
+    setReplyTarget(null);
 
     const fetchDetail = async () => {
       try {
@@ -340,6 +381,7 @@ function App() {
     if (!token || !selectedPostId || !replyBody.trim() || replySubmitting) return;
 
     const postId = selectedPostId;
+    const parentReplyId = replyTarget;
     setReplySubmitting(true);
     setReplyError("");
 
@@ -350,7 +392,7 @@ function App() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ body: replyBody }),
+        body: JSON.stringify({ body: replyBody, parentReplyId }),
       });
       const data = await res.json();
 
@@ -362,6 +404,7 @@ function App() {
       if (postIdFromHash() === postId) {
         setReplies((current) => [...current, data]);
         setReplyBody("");
+        setReplyTarget(null);
       }
       setSelectedPost((current) =>
         current?._id === postId
@@ -486,6 +529,48 @@ function App() {
     </div>
   );
 
+  const replyComposer = (targetReply = null) => (
+    <form className="reply-form" onSubmit={handleReplySubmit}>
+      {targetReply && (
+        <p className="replying-to">Replying to {targetReply.author}</p>
+      )}
+      <div className="post-editor">
+        <textarea
+          ref={replyInput}
+          aria-label={targetReply ? `Reply to ${targetReply.author}` : "Write a reply"}
+          placeholder="Write a reply..."
+          value={replyBody}
+          onChange={(e) => setReplyBody(e.target.value)}
+          required
+        />
+        <FormattingToolbar
+          label="Format reply text"
+          onFormat={(marker) => formatSelection(replyInput, replyBody, setReplyBody, marker)}
+        />
+      </div>
+      {replyError && <p className="reply-error" role="alert">{replyError}</p>}
+      <div className="reply-form-actions">
+        {targetReply && (
+          <button
+            className="reply-cancel"
+            type="button"
+            disabled={replySubmitting}
+            onClick={() => {
+              setReplyTarget(null);
+              setReplyBody("");
+              setReplyError("");
+            }}
+          >
+            Cancel
+          </button>
+        )}
+        <button className="reply-submit" type="submit" disabled={replySubmitting || !replyBody.trim()}>
+          {replySubmitting ? "Posting..." : "Reply"}
+        </button>
+      </div>
+    </form>
+  );
+
   return (
     <div className="container">
       <div className="header-row">
@@ -546,26 +631,7 @@ function App() {
               <section className="replies-section" aria-label="Replies">
                 <h3>Replies ({selectedPost.replyCount ?? replies.length})</h3>
                 {token ? (
-                  <form className="reply-form" onSubmit={handleReplySubmit}>
-                    <div className="post-editor">
-                      <textarea
-                        ref={replyInput}
-                        aria-label="Write a reply"
-                        placeholder="Write a reply..."
-                        value={replyBody}
-                        onChange={(e) => setReplyBody(e.target.value)}
-                        required
-                      />
-                      <FormattingToolbar
-                        label="Format reply text"
-                        onFormat={(marker) => formatSelection(replyInput, replyBody, setReplyBody, marker)}
-                      />
-                    </div>
-                    {replyError && <p className="reply-error" role="alert">{replyError}</p>}
-                    <button type="submit" disabled={replySubmitting || !replyBody.trim()}>
-                      {replySubmitting ? "Posting..." : "Reply"}
-                    </button>
-                  </form>
+                  !replyTarget && replyComposer()
                 ) : (
                   <p className="reply-note">Log in below to write a reply.</p>
                 )}
@@ -573,14 +639,43 @@ function App() {
                   <p className="reply-note">No replies yet.</p>
                 ) : (
                   <div className="reply-list">
-                    {replies.map((reply) => (
-                      <article className="reply" key={reply._id}>
-                        <p>{reply.bodyFormat === "markup" ? renderFormattedText(reply.body) : reply.body}</p>
-                        <span className="meta">
-                          replied by {reply.author} &middot;{" "}
-                          {new Date(reply.createdAt).toLocaleString()}
-                        </span>
-                      </article>
+                    {arrangeReplies(replies).map(({ reply, depth, parentAuthor }) => (
+                      <div
+                        className={`reply-thread-item ${depth ? "nested" : ""}`}
+                        key={reply._id}
+                        style={{ marginLeft: `${Math.min(depth, 5) * 16}px` }}
+                      >
+                        <article className="reply">
+                          <p>{reply.bodyFormat === "markup" ? renderFormattedText(reply.body) : reply.body}</p>
+                          <div className="reply-footer">
+                            <span className="meta">
+                              replied by {reply.author}
+                              {parentAuthor && <> to {parentAuthor}</>}
+                              {" "}&middot; {new Date(reply.createdAt).toLocaleString()}
+                            </span>
+                            {token && (
+                              <button
+                                className="reply-action"
+                                type="button"
+                                aria-label={`Reply to ${reply.author}`}
+                                aria-expanded={replyTarget === reply._id}
+                                disabled={replySubmitting}
+                                onClick={() => {
+                                  if (replyTarget !== reply._id) {
+                                    setReplyTarget(reply._id);
+                                    setReplyBody("");
+                                    setReplyError("");
+                                  }
+                                  requestAnimationFrame(() => replyInput.current?.focus());
+                                }}
+                              >
+                                Reply
+                              </button>
+                            )}
+                          </div>
+                        </article>
+                        {replyTarget === reply._id && replyComposer(reply)}
+                      </div>
                     ))}
                   </div>
                 )}

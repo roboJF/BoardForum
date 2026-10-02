@@ -80,19 +80,33 @@ router.get("/:id", optionalAuth, async (req, res) => {
 // POST a reply — requires a logged-in user
 router.post("/:id/replies", requireAuth, async (req, res) => {
   const body = req.body?.body;
+  const parentReplyId = req.body?.parentReplyId;
   if (typeof body !== "string" || !body.trim()) {
     return res.status(400).json({ error: "Reply cannot be empty" });
   }
   if (!mongoose.isValidObjectId(req.params.id)) {
     return res.status(400).json({ error: "Invalid post ID" });
   }
+  if (
+    parentReplyId != null &&
+    (typeof parentReplyId !== "string" || !mongoose.isValidObjectId(parentReplyId))
+  ) {
+    return res.status(400).json({ error: "Invalid parent reply ID" });
+  }
 
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: "Post not found" });
+    if (parentReplyId != null) {
+      const parent = await Reply.findOne({ _id: parentReplyId, post: post._id });
+      if (!parent) {
+        return res.status(404).json({ error: "Parent reply not found in this post" });
+      }
+    }
 
     const reply = await Reply.create({
       post: post._id,
+      parentReply: parentReplyId || null,
       body: body.trim(),
       bodyFormat: "markup",
       author: req.user.username,

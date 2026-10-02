@@ -110,16 +110,30 @@ test("replies require login and appear only in post detail with a feed count", a
   const originalFindById = Post.findById;
   const originalFind = Post.find;
   const originalReplyFind = Reply.find;
+  const originalReplyFindOne = Reply.findOne;
   const originalReplyCreate = Reply.create;
   const originalAggregate = Reply.aggregate;
   const post = new Post({ _id: postId, title: "Hello", body: "World" });
-  const storedReplies = [];
+  const storedReplies = [
+    new Reply({
+      _id: "507f1f77bcf86cd799439099",
+      post: "507f1f77bcf86cd799439012",
+      body: "Other post reply",
+      author: "bob",
+    }).toObject(),
+  ];
 
   Post.findById = async (id) => (id === postId ? post : null);
   Post.find = () => ({ sort: async () => [post] });
-  Reply.find = () => ({
-    sort: async () => storedReplies.map((reply) => new Reply(reply)),
+  Reply.find = ({ post: replyPost }) => ({
+    sort: async () => storedReplies
+      .filter((reply) => String(reply.post) === String(replyPost))
+      .map((reply) => new Reply(reply)),
   });
+  Reply.findOne = async ({ _id, post: replyPost }) =>
+    storedReplies.find(
+      (reply) => String(reply._id) === String(_id) && String(reply.post) === String(replyPost)
+    ) || null;
   Reply.create = async (fields) => {
     const reply = new Reply(fields);
     await reply.validate();
@@ -127,8 +141,10 @@ test("replies require login and appear only in post detail with a feed count", a
     storedReplies.push(reply.toObject());
     return reply;
   };
-  Reply.aggregate = async () =>
-    storedReplies.length ? [{ _id: post._id, count: storedReplies.length }] : [];
+  Reply.aggregate = async () => {
+    const count = storedReplies.filter((reply) => String(reply.post) === postId).length;
+    return count ? [{ _id: post._id, count }] : [];
+  };
 
   try {
     assert.equal((await callRoute("/:id/replies", "post", { body: { body: "Hi" } })).status, 401);
@@ -148,19 +164,53 @@ test("replies require login and appear only in post detail with a feed count", a
     assert.equal(result.data.body, "First reply");
     assert.equal(result.data.bodyFormat, "markup");
     assert.equal(result.data.author, "alice");
+    assert.equal(result.data.parentReply, null);
+    const firstReplyId = String(result.data._id);
+
+    assert.equal((await callRoute("/:id/replies", "post", {
+      authorized: true,
+      body: { body: "Nested", parentReplyId: "bad" },
+    })).status, 400);
+    assert.equal((await callRoute("/:id/replies", "post", {
+      authorized: true,
+      body: { body: "Nested", parentReplyId: "507f1f77bcf86cd799439098" },
+    })).status, 404);
+    assert.equal((await callRoute("/:id/replies", "post", {
+      authorized: true,
+      body: { body: "Nested", parentReplyId: "507f1f77bcf86cd799439099" },
+    })).status, 404);
+
+    result = await callRoute("/:id/replies", "post", {
+      authorized: true,
+      body: { body: "**Nested**", parentReplyId: firstReplyId },
+    });
+    assert.equal(result.status, 201);
+    assert.equal(String(result.data.parentReply), firstReplyId);
+    assert.equal(result.data.bodyFormat, "markup");
+    const secondReplyId = String(result.data._id);
+
+    result = await callRoute("/:id/replies", "post", {
+      authorized: true,
+      body: { body: "Deeper", parentReplyId: secondReplyId },
+    });
+    assert.equal(result.status, 201);
+    assert.equal(String(result.data.parentReply), secondReplyId);
 
     result = await callRoute("/", "get");
-    assert.equal(result.data[0].replyCount, 1);
+    assert.equal(result.data[0].replyCount, 3);
     assert.equal("replies" in result.data[0], false);
 
     result = await callRoute("/:id", "get");
-    assert.equal(result.data.post.replyCount, 1);
-    assert.equal(result.data.replies.length, 1);
+    assert.equal(result.data.post.replyCount, 3);
+    assert.equal(result.data.replies.length, 3);
     assert.equal(result.data.replies[0].body, "First reply");
+    assert.equal(String(result.data.replies[1].parentReply), firstReplyId);
+    assert.equal(String(result.data.replies[2].parentReply), secondReplyId);
   } finally {
     Post.findById = originalFindById;
     Post.find = originalFind;
     Reply.find = originalReplyFind;
+    Reply.findOne = originalReplyFindOne;
     Reply.create = originalReplyCreate;
     Reply.aggregate = originalAggregate;
   }
