@@ -239,6 +239,53 @@ h1 a {
   background: #3F847D;
 }
 
+.feed-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.feed-sort {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.feed-sort span {
+  margin-right: 4px;
+  color: #3f6f6a;
+  font-size: 13px;
+}
+
+.feed-sort button {
+  padding: 6px 12px;
+  border: 1px solid #cfe3e0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #3f6f6a;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.feed-sort button:hover,
+.feed-sort button.active {
+  border-color: #5FA8A0;
+  background: #e5f2ef;
+  color: #27665f;
+}
+
+.feed-sort button:focus-visible {
+  outline: 2px solid #4E9B94;
+  outline-offset: 2px;
+}
+
+.feed-error {
+  color: #c0524a;
+  font-size: 13px;
+}
+
 .post-list {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = "/api";
+const SORT_OPTIONS = [
+  { value: "new", label: "New" },
+  { value: "old", label: "Old" },
+  { value: "top", label: "Top" },
+];
 
 function Spoiler({ children }) {
   const [revealed, setRevealed] = useState(false);
@@ -147,6 +152,17 @@ function postIdFromHash() {
   return window.location.hash.match(/^#\/posts\/([a-f0-9]{24})$/i)?.[1].toLowerCase() || null;
 }
 
+function comparePosts(a, b, sortOrder) {
+  const dateDifference = new Date(a.createdAt) - new Date(b.createdAt);
+  const idDifference = String(a._id).localeCompare(String(b._id));
+  if (sortOrder === "top") {
+    return (b.score ?? 0) - (a.score ?? 0) || -dateDifference || -idDifference;
+  }
+  return sortOrder === "old"
+    ? dateDifference || idDifference
+    : -dateDifference || -idDifference;
+}
+
 function PostCard({ post, token, voting, voteError, onVote, detail = false }) {
   const postUrl = `#/posts/${post._id}`;
   const replyLabel = `${post.replyCount ?? 0} ${(post.replyCount ?? 0) === 1 ? "reply" : "replies"}`;
@@ -208,6 +224,9 @@ function PostCard({ post, token, voting, voteError, onVote, detail = false }) {
 function App() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [feedError, setFeedError] = useState("");
+  const [sortOrder, setSortOrder] = useState("new");
+  const [feedRefresh, setFeedRefresh] = useState(0);
   const [votingPosts, setVotingPosts] = useState({});
   const [voteErrors, setVoteErrors] = useState({});
   const [selectedPostId, setSelectedPostId] = useState(postIdFromHash);
@@ -232,24 +251,35 @@ function App() {
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
-
-  const fetchPosts = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/posts`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      setPosts(data);
-    } catch (err) {
-      console.error("Failed to fetch posts:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const sortedPosts = useMemo(
+    () => [...posts].sort((a, b) => comparePosts(a, b, sortOrder)),
+    [posts, sortOrder]
+  );
 
   useEffect(() => {
-    fetchPosts();
-  }, [token]);
+    const controller = new AbortController();
+    setLoading(true);
+    setFeedError("");
+
+    const loadPosts = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/posts?sort=${sortOrder}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Could not load posts");
+        const data = await res.json();
+        if (!controller.signal.aborted) setPosts(data);
+      } catch (err) {
+        if (!controller.signal.aborted) setFeedError(err.message || "Could not load posts");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+
+    loadPosts();
+    return () => controller.abort();
+  }, [token, sortOrder, feedRefresh]);
 
   useEffect(() => {
     const updateSelectedPost = () => {
@@ -471,9 +501,9 @@ function App() {
         return;
       }
 
-      setPosts([data, ...posts]);
       setTitle("");
       setBody("");
+      setFeedRefresh((current) => current + 1);
     } catch (err) {
       console.error("Failed to create post:", err);
     }
@@ -685,19 +715,36 @@ function App() {
           )}
         </div>
       ) : (
-        <div className="post-list">
-          {loading && <p>Loading posts...</p>}
-          {!loading && posts.length === 0 && <p>No posts yet. Be the first!</p>}
-          {posts.map((post) => (
-            <PostCard
-              key={post._id}
-              post={post}
-              token={token}
-              voting={votingPosts[post._id]}
-              voteError={voteErrors[post._id]}
-              onVote={handleVote}
-            />
-          ))}
+        <div className="feed-view">
+          <div className="feed-sort" role="group" aria-label="Sort posts">
+            <span>Sort by</span>
+            {SORT_OPTIONS.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                className={sortOrder === value ? "active" : ""}
+                aria-pressed={sortOrder === value}
+                onClick={() => setSortOrder(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="post-list">
+            {loading && <p>Loading posts...</p>}
+            {feedError && <p className="feed-error" role="alert">{feedError}</p>}
+            {!loading && !feedError && posts.length === 0 && <p>No posts yet. Be the first!</p>}
+            {sortedPosts.map((post) => (
+              <PostCard
+                key={post._id}
+                post={post}
+                token={token}
+                voting={votingPosts[post._id]}
+                voteError={voteErrors[post._id]}
+                onVote={handleVote}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -59,5 +59,5 @@ npm run dev
 Runs on `http://localhost:5173` and proxies `/api` requests to the backend.
 
 ### 4. Open the app
-Visit `http://localhost:5173`. The feed shows each post's total reply count. Open a post to read its reply threads; sign in to create a post, reply to a post or another reply, or vote. Reply editors support bold, italic, and spoiler formatting.
+Visit `http://localhost:5173`. The feed starts with new posts and can be sorted by New, Old, or Top (net vote score); it also shows each post's total reply count. Open a post to read its reply threads; sign in to create a post, reply to a post or another reply, or vote. Reply editors support bold, italic, and spoiler formatting.
 

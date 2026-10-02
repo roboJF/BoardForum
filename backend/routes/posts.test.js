@@ -12,7 +12,7 @@ const token = jwt.sign(
   process.env.JWT_SECRET || "dev-secret-change-me"
 );
 
-function callRoute(path, method, { authorized = false, body = {}, id = postId } = {}) {
+function callRoute(path, method, { authorized = false, body = {}, id = postId, query = {} } = {}) {
   const route = router.stack.find(
     (layer) => layer.route?.path === path && layer.route.methods[method]
   )?.route;
@@ -22,6 +22,7 @@ function callRoute(path, method, { authorized = false, body = {}, id = postId } 
     body,
     headers: authorized ? { authorization: `Bearer ${token}` } : {},
     params: { id },
+    query,
   };
 
   return new Promise((resolve, reject) => {
@@ -101,6 +102,57 @@ test("votes require login and toggle, switch, and stay private", async () => {
     assert.equal(result.data[0].userVote, 1);
   } finally {
     Post.findById = originalFindById;
+    Post.find = originalFind;
+    Reply.aggregate = originalAggregate;
+  }
+});
+
+test("feed sorts by new, old, and top score with new as the default", async () => {
+  const originalFind = Post.find;
+  const originalAggregate = Reply.aggregate;
+  const oldId = "507f1f77bcf86cd799439021";
+  const middleId = "507f1f77bcf86cd799439022";
+  const newId = "507f1f77bcf86cd799439023";
+  const voters = ["507f191e810c19729de860ea", "507f191e810c19729de860eb"];
+  const posts = [
+    new Post({
+      _id: oldId,
+      title: "Old",
+      body: "Old post",
+      createdAt: new Date("2025-01-01"),
+      votes: voters.map((user) => ({ user, value: 1 })),
+    }),
+    new Post({
+      _id: middleId,
+      title: "Middle",
+      body: "Middle post",
+      createdAt: new Date("2025-02-01"),
+      votes: voters.map((user) => ({ user, value: 1 })),
+    }),
+    new Post({
+      _id: newId,
+      title: "New",
+      body: "New post",
+      createdAt: new Date("2025-03-01"),
+      votes: [{ user: voters[0], value: -1 }],
+    }),
+  ];
+
+  Post.find = () => ({
+    sort: async ({ createdAt }) => [...posts].sort((a, b) =>
+      createdAt * (a.createdAt - b.createdAt || String(a._id).localeCompare(String(b._id)))
+    ),
+  });
+  Reply.aggregate = async () => [];
+
+  try {
+    const ids = (result) => result.data.map((post) => String(post._id));
+    assert.deepEqual(ids(await callRoute("/", "get")), [newId, middleId, oldId]);
+    assert.deepEqual(ids(await callRoute("/", "get", { query: { sort: "new" } })), [newId, middleId, oldId]);
+    assert.deepEqual(ids(await callRoute("/", "get", { query: { sort: "old" } })), [oldId, middleId, newId]);
+    assert.deepEqual(ids(await callRoute("/", "get", { query: { sort: "top" } })), [middleId, oldId, newId]);
+    assert.equal((await callRoute("/", "get", { query: { sort: "other" } })).status, 400);
+  } finally {
     Post.find = originalFind;
     Reply.aggregate = originalAggregate;
   }

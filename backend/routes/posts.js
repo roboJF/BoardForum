@@ -18,10 +18,16 @@ function postForViewer(post, userId, replyCount) {
   };
 }
 
-// GET all posts, newest first — public, no login required
+// GET all posts, sorted by newest, oldest, or net vote score
 router.get("/", optionalAuth, async (req, res) => {
+  const sort = req.query.sort || "new";
+  if (!["new", "old", "top"].includes(sort)) {
+    return res.status(400).json({ error: "Sort must be new, old, or top" });
+  }
+
   try {
-    const posts = await Post.find().sort({ createdAt: -1 });
+    const direction = sort === "old" ? 1 : -1;
+    const posts = await Post.find().sort({ createdAt: direction, _id: direction });
     if (posts.length === 0) return res.json([]);
 
     const counts = await Reply.aggregate([
@@ -32,11 +38,18 @@ router.get("/", optionalAuth, async (req, res) => {
       counts.map(({ _id, count }) => [String(_id), count])
     );
 
-    res.json(
-      posts.map((post) =>
-        postForViewer(post, req.user?.id, countsByPost.get(String(post._id)) || 0)
-      )
+    const result = posts.map((post) =>
+      postForViewer(post, req.user?.id, countsByPost.get(String(post._id)) || 0)
     );
+    if (sort === "top") {
+      result.sort(
+        (a, b) =>
+          b.score - a.score ||
+          new Date(b.createdAt) - new Date(a.createdAt) ||
+          String(b._id).localeCompare(String(a._id))
+      );
+    }
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
