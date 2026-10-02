@@ -87,11 +87,99 @@ function renderFormattedText(text, depth = 0, insideSpoiler = false) {
   return result;
 }
 
+function FormattingToolbar({ label, onFormat }) {
+  return (
+    <div className="format-toolbar" role="toolbar" aria-label={label}>
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onFormat("**")} aria-label="Bold selected text" title="Bold">
+        <strong>B</strong>
+      </button>
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onFormat("*")} aria-label="Italicize selected text" title="Italic">
+        <em>I</em>
+      </button>
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onFormat("||")} aria-label="Mark selected text as a spoiler" title="Spoiler">
+        Spoiler
+      </button>
+      <span className="format-hint">Use <code>{"\\*"}</code> for a literal *</span>
+    </div>
+  );
+}
+
+function postIdFromHash() {
+  return window.location.hash.match(/^#\/posts\/([a-f0-9]{24})$/i)?.[1].toLowerCase() || null;
+}
+
+function PostCard({ post, token, voting, voteError, onVote, detail = false }) {
+  const postUrl = `#/posts/${post._id}`;
+  const replyLabel = `${post.replyCount ?? 0} ${(post.replyCount ?? 0) === 1 ? "reply" : "replies"}`;
+
+  const openPost = (event) => {
+    if (detail || event.target.closest("a, button") || window.getSelection()?.toString()) {
+      return;
+    }
+    window.location.hash = postUrl;
+  };
+
+  return (
+    <article className={`post ${detail ? "" : "post-clickable"}`} onClick={openPost}>
+      <h2>{detail ? post.title : <a href={postUrl}>{post.title}</a>}</h2>
+      <p>{renderFormattedText(post.body)}</p>
+      <div className="post-footer">
+        <div className="vote-controls" role="group" aria-label={`Votes for ${post.title}`}>
+          <button
+            type="button"
+            className={post.userVote === 1 ? "active" : ""}
+            aria-label={`Upvote ${post.title}`}
+            aria-pressed={post.userVote === 1}
+            title={token ? "Upvote" : "Log in to vote"}
+            disabled={!token || voting}
+            onClick={() => onVote(post._id, 1)}
+          >
+            ▲
+          </button>
+          <span className="vote-score" aria-label={`Score: ${post.score ?? 0}`}>
+            {post.score ?? 0}
+          </span>
+          <button
+            type="button"
+            className={post.userVote === -1 ? "active" : ""}
+            aria-label={`Downvote ${post.title}`}
+            aria-pressed={post.userVote === -1}
+            title={token ? "Downvote" : "Log in to vote"}
+            disabled={!token || voting}
+            onClick={() => onVote(post._id, -1)}
+          >
+            ▼
+          </button>
+        </div>
+        {detail ? (
+          <span className="reply-count">{replyLabel}</span>
+        ) : (
+          <a className="reply-count" href={postUrl}>{replyLabel}</a>
+        )}
+        <span className="meta">
+          posted by {post.author} &middot;{" "}
+          {new Date(post.createdAt).toLocaleString()}
+        </span>
+      </div>
+      {voteError && <p className="vote-error" role="alert">{voteError}</p>}
+    </article>
+  );
+}
+
 function App() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [votingPosts, setVotingPosts] = useState({});
   const [voteErrors, setVoteErrors] = useState({});
+  const [selectedPostId, setSelectedPostId] = useState(postIdFromHash);
+  const [selectedPost, setSelectedPost] = useState(null);
+  const [replies, setReplies] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const replyInput = useRef(null);
+  const [replySubmitting, setReplySubmitting] = useState(false);
+  const [replyError, setReplyError] = useState("");
 
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [username, setUsername] = useState(localStorage.getItem("username") || "");
@@ -122,6 +210,52 @@ function App() {
   useEffect(() => {
     fetchPosts();
   }, [token]);
+
+  useEffect(() => {
+    const updateSelectedPost = () => {
+      setSelectedPostId(postIdFromHash());
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener("hashchange", updateSelectedPost);
+    return () => window.removeEventListener("hashchange", updateSelectedPost);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPostId) {
+      setSelectedPost(null);
+      setReplies([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    setDetailLoading(true);
+    setDetailError("");
+    setReplyError("");
+    setReplyBody("");
+
+    const fetchDetail = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/posts/${selectedPostId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not load post");
+        setSelectedPost(data.post);
+        setReplies(data.replies);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setSelectedPost(null);
+          setDetailError(err.message || "Could not load post");
+        }
+      } finally {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      }
+    };
+
+    fetchDetail();
+    return () => controller.abort();
+  }, [selectedPostId, token]);
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -186,7 +320,10 @@ function App() {
       }
 
       setPosts((current) =>
-        current.map((post) => (post._id === postId ? data : post))
+        current.map((post) => (post._id === postId ? { ...post, ...data } : post))
+      );
+      setSelectedPost((current) =>
+        current?._id === postId ? { ...current, ...data } : current
       );
     } catch (err) {
       setVoteErrors((current) => ({
@@ -198,15 +335,64 @@ function App() {
     }
   };
 
-  const formatSelection = (marker) => {
-    const textarea = bodyInput.current;
+  const handleReplySubmit = async (e) => {
+    e.preventDefault();
+    if (!token || !selectedPostId || !replyBody.trim() || replySubmitting) return;
+
+    const postId = selectedPostId;
+    setReplySubmitting(true);
+    setReplyError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/posts/${postId}/replies`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ body: replyBody }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 401) handleLogout();
+        throw new Error(data.error || "Could not post reply");
+      }
+
+      if (postIdFromHash() === postId) {
+        setReplies((current) => [...current, data]);
+        setReplyBody("");
+      }
+      setSelectedPost((current) =>
+        current?._id === postId
+          ? { ...current, replyCount: (current.replyCount || 0) + 1 }
+          : current
+      );
+      setPosts((current) =>
+        current.map((post) =>
+          post._id === postId
+            ? { ...post, replyCount: (post.replyCount || 0) + 1 }
+            : post
+        )
+      );
+    } catch (err) {
+      if (postIdFromHash() === postId) {
+        setReplyError(err.message || "Could not post reply");
+      }
+    } finally {
+      setReplySubmitting(false);
+    }
+  };
+
+  const formatSelection = (input, value, setValue, marker) => {
+    const textarea = input.current;
     if (!textarea) return;
 
     const { selectionStart, selectionEnd } = textarea;
-    const selectedText = body.slice(selectionStart, selectionEnd);
+    const selectedText = value.slice(selectionStart, selectionEnd);
     const replacement = `${marker}${selectedText}${marker}`;
-    setBody(
-      body.slice(0, selectionStart) + replacement + body.slice(selectionEnd)
+    setValue(
+      value.slice(0, selectionStart) + replacement + value.slice(selectionEnd)
     );
 
     requestAnimationFrame(() => {
@@ -250,10 +436,60 @@ function App() {
     }
   };
 
+  const authBox = (
+    <div className="auth-box">
+      <div className="auth-tabs">
+        <button
+          type="button"
+          className={authMode === "login" ? "active" : ""}
+          onClick={() => {
+            setAuthMode("login");
+            setAuthError("");
+          }}
+        >
+          Log in
+        </button>
+        <button
+          type="button"
+          className={authMode === "register" ? "active" : ""}
+          onClick={() => {
+            setAuthMode("register");
+            setAuthError("");
+          }}
+        >
+          Sign up
+        </button>
+      </div>
+
+      <form onSubmit={handleAuthSubmit} className="auth-form">
+        <input
+          type="text"
+          placeholder="Username"
+          value={authUsername}
+          onChange={(e) => setAuthUsername(e.target.value)}
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={authPassword}
+          onChange={(e) => setAuthPassword(e.target.value)}
+        />
+        {authError && <p className="auth-error">{authError}</p>}
+        <button type="submit">
+          {authMode === "login" ? "Log in" : "Create account"}
+        </button>
+      </form>
+
+      <p className="auth-hint">
+        You need an account to post, reply, or vote, but anyone can read.
+      </p>
+    </div>
+  );
+
   return (
     <div className="container">
       <div className="header-row">
-        <h1>board.</h1>
+        <h1><a href="#/">board.</a></h1>
         {token && (
           <div className="account-info">
             <span>
@@ -266,7 +502,7 @@ function App() {
         )}
       </div>
 
-      {token ? (
+      {token && !selectedPostId && (
         <form onSubmit={handleSubmit} className="post-form">
           <input
             type="text"
@@ -282,117 +518,93 @@ function App() {
               value={body}
               onChange={(e) => setBody(e.target.value)}
             />
-            <div className="format-toolbar" role="toolbar" aria-label="Format post text">
-              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => formatSelection("**")} aria-label="Bold selected text" title="Bold">
-                <strong>B</strong>
-              </button>
-              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => formatSelection("*")} aria-label="Italicize selected text" title="Italic">
-                <em>I</em>
-              </button>
-              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => formatSelection("||")} aria-label="Mark selected text as a spoiler" title="Spoiler">
-                Spoiler
-              </button>
-              <span className="format-hint">Use <code>{"\\*"}</code> for a literal *</span>
-            </div>
+            <FormattingToolbar
+              label="Format post text"
+              onFormat={(marker) => formatSelection(bodyInput, body, setBody, marker)}
+            />
           </div>
           <button className="post-submit" type="submit">Post</button>
         </form>
+      )}
+      {!token && !selectedPostId && authBox}
+
+      {selectedPostId ? (
+        <div className="detail-view">
+          <a className="back-link" href="#/">← Back to posts</a>
+          {detailLoading && selectedPost?._id !== selectedPostId && <p>Loading post...</p>}
+          {detailError && <p className="detail-error" role="alert">{detailError}</p>}
+          {selectedPost?._id === selectedPostId && (
+            <>
+              <PostCard
+                post={selectedPost}
+                token={token}
+                voting={votingPosts[selectedPostId]}
+                voteError={voteErrors[selectedPostId]}
+                onVote={handleVote}
+                detail
+              />
+              <section className="replies-section" aria-label="Replies">
+                <h3>Replies ({selectedPost.replyCount ?? replies.length})</h3>
+                {token ? (
+                  <form className="reply-form" onSubmit={handleReplySubmit}>
+                    <div className="post-editor">
+                      <textarea
+                        ref={replyInput}
+                        aria-label="Write a reply"
+                        placeholder="Write a reply..."
+                        value={replyBody}
+                        onChange={(e) => setReplyBody(e.target.value)}
+                        required
+                      />
+                      <FormattingToolbar
+                        label="Format reply text"
+                        onFormat={(marker) => formatSelection(replyInput, replyBody, setReplyBody, marker)}
+                      />
+                    </div>
+                    {replyError && <p className="reply-error" role="alert">{replyError}</p>}
+                    <button type="submit" disabled={replySubmitting || !replyBody.trim()}>
+                      {replySubmitting ? "Posting..." : "Reply"}
+                    </button>
+                  </form>
+                ) : (
+                  <p className="reply-note">Log in below to write a reply.</p>
+                )}
+                {replies.length === 0 ? (
+                  <p className="reply-note">No replies yet.</p>
+                ) : (
+                  <div className="reply-list">
+                    {replies.map((reply) => (
+                      <article className="reply" key={reply._id}>
+                        <p>{reply.bodyFormat === "markup" ? renderFormattedText(reply.body) : reply.body}</p>
+                        <span className="meta">
+                          replied by {reply.author} &middot;{" "}
+                          {new Date(reply.createdAt).toLocaleString()}
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+              {!token && authBox}
+            </>
+          )}
+        </div>
       ) : (
-        <div className="auth-box">
-          <div className="auth-tabs">
-            <button
-              type="button"
-              className={authMode === "login" ? "active" : ""}
-              onClick={() => {
-                setAuthMode("login");
-                setAuthError("");
-              }}
-            >
-              Log in
-            </button>
-            <button
-              type="button"
-              className={authMode === "register" ? "active" : ""}
-              onClick={() => {
-                setAuthMode("register");
-                setAuthError("");
-              }}
-            >
-              Sign up
-            </button>
-          </div>
-
-          <form onSubmit={handleAuthSubmit} className="auth-form">
-            <input
-              type="text"
-              placeholder="Username"
-              value={authUsername}
-              onChange={(e) => setAuthUsername(e.target.value)}
+        <div className="post-list">
+          {loading && <p>Loading posts...</p>}
+          {!loading && posts.length === 0 && <p>No posts yet. Be the first!</p>}
+          {posts.map((post) => (
+            <PostCard
+              key={post._id}
+              post={post}
+              token={token}
+              voting={votingPosts[post._id]}
+              voteError={voteErrors[post._id]}
+              onVote={handleVote}
             />
-            <input
-              type="password"
-              placeholder="Password"
-              value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
-            />
-            {authError && <p className="auth-error">{authError}</p>}
-            <button type="submit">
-              {authMode === "login" ? "Log in" : "Create account"}
-            </button>
-          </form>
-
-          <p className="auth-hint">
-            You need an account to post or vote, but anyone can read posts.
-          </p>
+          ))}
         </div>
       )}
-
-      <div className="post-list">
-        {loading && <p>Loading posts...</p>}
-        {!loading && posts.length === 0 && <p>No posts yet. Be the first!</p>}
-        {posts.map((post) => (
-          <div key={post._id} className="post">
-            <h2>{post.title}</h2>
-            <p>{renderFormattedText(post.body)}</p>
-            <div className="post-footer">
-              <div className="vote-controls" role="group" aria-label={`Votes for ${post.title}`}>
-                <button
-                  type="button"
-                  className={post.userVote === 1 ? "active" : ""}
-                  aria-label={`Upvote ${post.title}`}
-                  aria-pressed={post.userVote === 1}
-                  title={token ? "Upvote" : "Log in to vote"}
-                  disabled={!token || votingPosts[post._id]}
-                  onClick={() => handleVote(post._id, 1)}
-                >
-                  ▲
-                </button>
-                <span className="vote-score" aria-label={`Score: ${post.score ?? 0}`}>
-                  {post.score ?? 0}
-                </span>
-                <button
-                  type="button"
-                  className={post.userVote === -1 ? "active" : ""}
-                  aria-label={`Downvote ${post.title}`}
-                  aria-pressed={post.userVote === -1}
-                  title={token ? "Downvote" : "Log in to vote"}
-                  disabled={!token || votingPosts[post._id]}
-                  onClick={() => handleVote(post._id, -1)}
-                >
-                  ▼
-                </button>
-              </div>
-              <span className="meta">
-                posted by {post.author} &middot;{" "}
-                {new Date(post.createdAt).toLocaleString()}
-              </span>
-            </div>
-            {voteErrors[post._id] && (
-              <p className="vote-error" role="alert">{voteErrors[post._id]}</p>
-            )}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

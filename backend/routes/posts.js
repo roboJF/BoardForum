@@ -1,11 +1,12 @@
 import express from "express";
 import mongoose from "mongoose";
 import Post from "../models/Post.js";
+import Reply from "../models/Reply.js";
 import { optionalAuth, requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
 
-function postForViewer(post, userId) {
+function postForViewer(post, userId, replyCount) {
   const { votes = [], ...details } = post.toObject();
   const ownVote = votes.find((vote) => String(vote.user) === String(userId));
 
@@ -13,6 +14,7 @@ function postForViewer(post, userId) {
     ...details,
     score: votes.reduce((total, vote) => total + vote.value, 0),
     userVote: ownVote?.value || 0,
+    ...(replyCount === undefined ? {} : { replyCount }),
   };
 }
 
@@ -20,7 +22,21 @@ function postForViewer(post, userId) {
 router.get("/", optionalAuth, async (req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 });
-    res.json(posts.map((post) => postForViewer(post, req.user?.id)));
+    if (posts.length === 0) return res.json([]);
+
+    const counts = await Reply.aggregate([
+      { $match: { post: { $in: posts.map((post) => post._id) } } },
+      { $group: { _id: "$post", count: { $sum: 1 } } },
+    ]);
+    const countsByPost = new Map(
+      counts.map(({ _id, count }) => [String(_id), count])
+    );
+
+    res.json(
+      posts.map((post) =>
+        postForViewer(post, req.user?.id, countsByPost.get(String(post._id)) || 0)
+      )
+    );
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -35,7 +51,53 @@ router.post("/", requireAuth, async (req, res) => {
     }
     // author is taken from the verified token, never trusted from the client
     const post = await Post.create({ title, body, author: req.user.username });
-    res.status(201).json(postForViewer(post, req.user.id));
+    res.status(201).json(postForViewer(post, req.user.id, 0));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET a post and its replies — public, no login required
+router.get("/:id", optionalAuth, async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: "Invalid post ID" });
+  }
+
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+
+    const replies = await Reply.find({ post: post._id }).sort({ createdAt: 1 });
+    res.json({
+      post: postForViewer(post, req.user?.id, replies.length),
+      replies,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST a reply — requires a logged-in user
+router.post("/:id/replies", requireAuth, async (req, res) => {
+  const body = req.body?.body;
+  if (typeof body !== "string" || !body.trim()) {
+    return res.status(400).json({ error: "Reply cannot be empty" });
+  }
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: "Invalid post ID" });
+  }
+
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: "Post not found" });
+
+    const reply = await Reply.create({
+      post: post._id,
+      body: body.trim(),
+      bodyFormat: "markup",
+      author: req.user.username,
+    });
+    res.status(201).json(reply);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

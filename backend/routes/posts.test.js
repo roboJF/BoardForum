@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import jwt from "jsonwebtoken";
 import Post from "../models/Post.js";
+import Reply from "../models/Reply.js";
 import router from "./posts.js";
 
 const postId = "507f1f77bcf86cd799439011";
@@ -53,6 +54,7 @@ function callRoute(path, method, { authorized = false, body = {}, id = postId } 
 test("votes require login and toggle, switch, and stay private", async () => {
   const originalFindById = Post.findById;
   const originalFind = Post.find;
+  const originalAggregate = Reply.aggregate;
   let stored = new Post({ _id: postId, title: "Hello", body: "World" }).toObject();
 
   Post.findById = async (id) => {
@@ -66,6 +68,7 @@ test("votes require login and toggle, switch, and stay private", async () => {
     return post;
   };
   Post.find = () => ({ sort: async () => [new Post(stored)] });
+  Reply.aggregate = async () => [];
 
   try {
     assert.equal((await callRoute("/:id/vote", "post", { body: { value: 1 } })).status, 401);
@@ -99,5 +102,66 @@ test("votes require login and toggle, switch, and stay private", async () => {
   } finally {
     Post.findById = originalFindById;
     Post.find = originalFind;
+    Reply.aggregate = originalAggregate;
+  }
+});
+
+test("replies require login and appear only in post detail with a feed count", async () => {
+  const originalFindById = Post.findById;
+  const originalFind = Post.find;
+  const originalReplyFind = Reply.find;
+  const originalReplyCreate = Reply.create;
+  const originalAggregate = Reply.aggregate;
+  const post = new Post({ _id: postId, title: "Hello", body: "World" });
+  const storedReplies = [];
+
+  Post.findById = async (id) => (id === postId ? post : null);
+  Post.find = () => ({ sort: async () => [post] });
+  Reply.find = () => ({
+    sort: async () => storedReplies.map((reply) => new Reply(reply)),
+  });
+  Reply.create = async (fields) => {
+    const reply = new Reply(fields);
+    await reply.validate();
+    reply.createdAt = new Date();
+    storedReplies.push(reply.toObject());
+    return reply;
+  };
+  Reply.aggregate = async () =>
+    storedReplies.length ? [{ _id: post._id, count: storedReplies.length }] : [];
+
+  try {
+    assert.equal((await callRoute("/:id/replies", "post", { body: { body: "Hi" } })).status, 401);
+    assert.equal((await callRoute("/:id/replies", "post", { authorized: true, body: { body: "  " } })).status, 400);
+    assert.equal((await callRoute("/:id", "get", { id: "bad" })).status, 400);
+    assert.equal((await callRoute("/:id", "get", { id: "507f1f77bcf86cd799439012" })).status, 404);
+
+    let result = await callRoute("/", "get");
+    assert.equal(result.data[0].replyCount, 0);
+    assert.equal("replies" in result.data[0], false);
+
+    result = await callRoute("/:id/replies", "post", {
+      authorized: true,
+      body: { body: "  First reply  ", author: "impostor" },
+    });
+    assert.equal(result.status, 201);
+    assert.equal(result.data.body, "First reply");
+    assert.equal(result.data.bodyFormat, "markup");
+    assert.equal(result.data.author, "alice");
+
+    result = await callRoute("/", "get");
+    assert.equal(result.data[0].replyCount, 1);
+    assert.equal("replies" in result.data[0], false);
+
+    result = await callRoute("/:id", "get");
+    assert.equal(result.data.post.replyCount, 1);
+    assert.equal(result.data.replies.length, 1);
+    assert.equal(result.data.replies[0].body, "First reply");
+  } finally {
+    Post.findById = originalFindById;
+    Post.find = originalFind;
+    Reply.find = originalReplyFind;
+    Reply.create = originalReplyCreate;
+    Reply.aggregate = originalAggregate;
   }
 });

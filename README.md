@@ -13,17 +13,18 @@ board/
 ├── backend/
 │   ├── models/
 │   │   ├── Post.js           # Mongoose schema for posts
+│   │   ├── Reply.js          # Mongoose schema for replies
 │   │   └── User.js           # Mongoose schema for accounts
 │   ├── middleware/auth.js    # Verifies JWT, protects routes
 │   ├── routes/
 │   │   ├── auth.js           # POST /api/auth/register, /api/auth/login
-│   │   └── posts.js          # GET/POST /api/posts
+│   │   └── posts.js          # Posts, votes, and replies API routes
 │   ├── server.js             # Express app entry point
 │   ├── .env.example
 │   └── package.json
 └── frontend/
     ├── src/
-    │   ├── App.jsx            # Post form, post list, login/signup forms
+    │   ├── App.jsx            # Feed, post detail, replies, and account forms
     │   ├── App.css
     │   └── main.jsx
     ├── index.html
@@ -58,5 +59,5 @@ npm run dev
 Runs on `http://localhost:5173` and proxies `/api` requests to the backend.
 
 ### 4. Open the app
-Visit `http://localhost:5173`. You'll see the post list right away. To create a post, sign up for an account (or log in) — the post form only appears once you're logged in.
+Visit `http://localhost:5173`. The feed shows each post's reply count. Open a post to read its replies; sign in to create a post, reply, or vote.
 
